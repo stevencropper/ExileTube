@@ -1,0 +1,46 @@
+name: Build Exile Tube Baseline
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout pinned SmartTube source
+        uses: actions/checkout@v4
+        with:
+          repository: yuliskov/SmartTube
+          ref: c0dfea54672f9cbba8ae3d1272917484b2c71dc4
+          submodules: recursive
+          path: smarttube
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install required Android packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-34" "build-tools;30.0.3" "ndk;21.0.6113669"
+
+      - name: Build debug APK
+        working-directory: smarttube
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon :smarttubetv:assembleStfdroidDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ExileTube-baseline-apk
+          path: smarttube/smarttubetv/build/outputs/apk/stfdroid/debug/*.apk
+          if-no-files-found: error
