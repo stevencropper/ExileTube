@@ -90,6 +90,427 @@ jobs:
                   utils.write_text(src)
           PY
 
+      - name: Add Exile Access login gate
+        working-directory: smarttube
+        run: |
+          mkdir -p smarttubetv/src/main/java/uk/co/exilemedia/tube
+
+          cat > smarttubetv/src/main/java/uk/co/exilemedia/tube/ExileLoginActivity.java <<'JAVA'
+          package uk.co.exilemedia.tube;
+
+          import android.app.Activity;
+          import android.content.Intent;
+          import android.content.SharedPreferences;
+          import android.graphics.Color;
+          import android.graphics.drawable.Drawable;
+          import android.os.Build;
+          import android.os.Bundle;
+          import android.text.InputType;
+          import android.view.Gravity;
+          import android.view.View;
+          import android.widget.Button;
+          import android.widget.EditText;
+          import android.widget.ImageView;
+          import android.widget.LinearLayout;
+          import android.widget.TextView;
+
+          import com.liskovsoft.smartyoutubetv2.tv.ui.main.SplashActivity;
+
+          import org.json.JSONObject;
+
+          import java.io.BufferedReader;
+          import java.io.InputStream;
+          import java.io.InputStreamReader;
+          import java.io.OutputStream;
+          import java.net.HttpURLConnection;
+          import java.net.URL;
+          import java.nio.charset.StandardCharsets;
+          import java.util.UUID;
+
+          public class ExileLoginActivity extends Activity {
+              private static final String API_BASE =
+                      "https://unwieldy-tender-byte.replit.app/api";
+
+              private static final String PREFS = "exile_access";
+              private static final String KEY_TOKEN = "session_token";
+              private static final String KEY_DEVICE_ID = "device_id";
+
+              private SharedPreferences prefs;
+              private EditText usernameInput;
+              private EditText passwordInput;
+              private Button loginButton;
+              private TextView statusText;
+              private String deviceId;
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+
+                  prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+                  deviceId = getOrCreateDeviceId();
+
+                  buildUi();
+
+                  String token = prefs.getString(KEY_TOKEN, null);
+
+                  if (token != null && !token.isEmpty()) {
+                      setBusy(true, "Checking access...");
+                      validateSession(token);
+                  } else {
+                      setBusy(false, "Enter your Exile Tube login.");
+                      usernameInput.requestFocus();
+                  }
+              }
+
+              private void buildUi() {
+                  LinearLayout root = new LinearLayout(this);
+                  root.setOrientation(LinearLayout.VERTICAL);
+                  root.setGravity(Gravity.CENTER);
+                  root.setPadding(80, 50, 80, 50);
+                  root.setBackgroundColor(Color.rgb(10, 10, 10));
+
+                  LinearLayout.LayoutParams wideParams =
+                          new LinearLayout.LayoutParams(
+                                  LinearLayout.LayoutParams.MATCH_PARENT,
+                                  LinearLayout.LayoutParams.WRAP_CONTENT
+                          );
+                  wideParams.setMargins(0, 10, 0, 10);
+
+                  ImageView logo = new ImageView(this);
+
+                  try {
+                      Drawable icon = getPackageManager()
+                              .getApplicationIcon(getApplicationInfo());
+                      logo.setImageDrawable(icon);
+                  } catch (Exception ignored) {
+                  }
+
+                  LinearLayout.LayoutParams logoParams =
+                          new LinearLayout.LayoutParams(180, 180);
+                  logoParams.gravity = Gravity.CENTER_HORIZONTAL;
+                  logoParams.setMargins(0, 0, 0, 20);
+                  root.addView(logo, logoParams);
+
+                  TextView title = new TextView(this);
+                  title.setText("EXILE PREMIUM TUBE");
+                  title.setTextColor(Color.WHITE);
+                  title.setTextSize(28);
+                  title.setGravity(Gravity.CENTER);
+                  title.setTypeface(null, android.graphics.Typeface.BOLD);
+                  root.addView(title, wideParams);
+
+                  TextView subtitle = new TextView(this);
+                  subtitle.setText("Customer Access");
+                  subtitle.setTextColor(Color.rgb(255, 95, 31));
+                  subtitle.setTextSize(19);
+                  subtitle.setGravity(Gravity.CENTER);
+                  root.addView(subtitle, wideParams);
+
+                  usernameInput = new EditText(this);
+                  usernameInput.setHint("Username");
+                  usernameInput.setSingleLine(true);
+                  usernameInput.setTextColor(Color.WHITE);
+                  usernameInput.setHintTextColor(Color.LTGRAY);
+                  usernameInput.setTextSize(20);
+                  root.addView(usernameInput, wideParams);
+
+                  passwordInput = new EditText(this);
+                  passwordInput.setHint("Password");
+                  passwordInput.setSingleLine(true);
+                  passwordInput.setTextColor(Color.WHITE);
+                  passwordInput.setHintTextColor(Color.LTGRAY);
+                  passwordInput.setTextSize(20);
+                  passwordInput.setInputType(
+                          InputType.TYPE_CLASS_TEXT |
+                          InputType.TYPE_TEXT_VARIATION_PASSWORD
+                  );
+                  root.addView(passwordInput, wideParams);
+
+                  loginButton = new Button(this);
+                  loginButton.setText("SIGN IN");
+                  loginButton.setTextSize(20);
+                  loginButton.setAllCaps(true);
+                  loginButton.setFocusable(true);
+                  loginButton.setFocusableInTouchMode(true);
+                  root.addView(loginButton, wideParams);
+
+                  statusText = new TextView(this);
+                  statusText.setTextColor(Color.WHITE);
+                  statusText.setTextSize(17);
+                  statusText.setGravity(Gravity.CENTER);
+                  statusText.setPadding(0, 20, 0, 0);
+                  root.addView(statusText, wideParams);
+
+                  loginButton.setOnClickListener(v -> performLogin());
+
+                  setContentView(root);
+              }
+
+              private String getOrCreateDeviceId() {
+                  String existing = prefs.getString(KEY_DEVICE_ID, null);
+
+                  if (existing != null && existing.length() >= 8) {
+                      return existing;
+                  }
+
+                  String created = UUID.randomUUID().toString();
+
+                  prefs.edit()
+                          .putString(KEY_DEVICE_ID, created)
+                          .apply();
+
+                  return created;
+              }
+
+              private String getDeviceName() {
+                  String manufacturer =
+                          Build.MANUFACTURER == null ? "" : Build.MANUFACTURER;
+                  String model =
+                          Build.MODEL == null ? "Android TV" : Build.MODEL;
+
+                  String name = (manufacturer + " " + model).trim();
+
+                  if (name.length() > 255) {
+                      name = name.substring(0, 255);
+                  }
+
+                  return name;
+              }
+
+              private void performLogin() {
+                  String username = usernameInput.getText().toString().trim();
+                  String password = passwordInput.getText().toString();
+
+                  if (username.isEmpty() || password.isEmpty()) {
+                      statusText.setText("Enter your username and password.");
+                      return;
+                  }
+
+                  setBusy(true, "Signing in...");
+
+                  new Thread(() -> {
+                      try {
+                          JSONObject request = new JSONObject();
+                          request.put("username", username);
+                          request.put("password", password);
+                          request.put("deviceId", deviceId);
+                          request.put("deviceName", getDeviceName());
+
+                          JSONObject response =
+                                  postJson(API_BASE + "/client/login", request);
+
+                          String status =
+                                  response.optString("status", "denied");
+                          String message =
+                                  response.optString(
+                                          "message",
+                                          "Access denied."
+                                  );
+
+                          if ("allowed".equalsIgnoreCase(status)) {
+                              String token =
+                                      response.optString("token", "");
+
+                              if (token.isEmpty()) {
+                                  showError("Login succeeded but no session token was returned.");
+                                  return;
+                              }
+
+                              prefs.edit()
+                                      .putString(KEY_TOKEN, token)
+                                      .apply();
+
+                              runOnUiThread(this::openSmartTube);
+                          } else {
+                              showError(message);
+                          }
+                      } catch (Exception e) {
+                          showError(
+                                  "Unable to contact Exile Access. Check your internet connection."
+                          );
+                      }
+                  }).start();
+              }
+
+              private void validateSession(String token) {
+                  new Thread(() -> {
+                      try {
+                          JSONObject request = new JSONObject();
+                          request.put("token", token);
+                          request.put("deviceId", deviceId);
+
+                          JSONObject response =
+                                  postJson(API_BASE + "/client/session", request);
+
+                          String status =
+                                  response.optString("status", "denied");
+                          String message =
+                                  response.optString(
+                                          "message",
+                                          "Access denied."
+                                  );
+
+                          if ("allowed".equalsIgnoreCase(status)) {
+                              runOnUiThread(this::openSmartTube);
+                          } else {
+                              prefs.edit().remove(KEY_TOKEN).apply();
+                              showError(message);
+                          }
+                      } catch (Exception e) {
+                          runOnUiThread(() -> {
+                              setBusy(
+                                      false,
+                                      "Unable to verify access. Check your internet connection."
+                              );
+                              usernameInput.requestFocus();
+                          });
+                      }
+                  }).start();
+              }
+
+              private JSONObject postJson(String endpoint, JSONObject body)
+                      throws Exception {
+
+                  HttpURLConnection connection =
+                          (HttpURLConnection) new URL(endpoint).openConnection();
+
+                  connection.setRequestMethod("POST");
+                  connection.setConnectTimeout(10000);
+                  connection.setReadTimeout(10000);
+                  connection.setDoOutput(true);
+                  connection.setRequestProperty(
+                          "Content-Type",
+                          "application/json; charset=utf-8"
+                  );
+                  connection.setRequestProperty(
+                          "Accept",
+                          "application/json"
+                  );
+
+                  byte[] payload =
+                          body.toString().getBytes(StandardCharsets.UTF_8);
+
+                  try (OutputStream output = connection.getOutputStream()) {
+                      output.write(payload);
+                  }
+
+                  int responseCode = connection.getResponseCode();
+
+                  InputStream input;
+
+                  if (responseCode >= 200 && responseCode < 300) {
+                      input = connection.getInputStream();
+                  } else {
+                      input = connection.getErrorStream();
+                  }
+
+                  if (input == null) {
+                      throw new Exception(
+                              "Empty server response: " + responseCode
+                      );
+                  }
+
+                  StringBuilder responseText = new StringBuilder();
+
+                  try (BufferedReader reader =
+                               new BufferedReader(
+                                       new InputStreamReader(
+                                               input,
+                                               StandardCharsets.UTF_8
+                                       )
+                               )) {
+
+                      String line;
+
+                      while ((line = reader.readLine()) != null) {
+                          responseText.append(line);
+                      }
+                  } finally {
+                      connection.disconnect();
+                  }
+
+                  return new JSONObject(responseText.toString());
+              }
+
+              private void showError(String message) {
+                  runOnUiThread(() -> {
+                      setBusy(false, message);
+                      passwordInput.setText("");
+                      usernameInput.requestFocus();
+                  });
+              }
+
+              private void setBusy(boolean busy, String message) {
+                  usernameInput.setEnabled(!busy);
+                  passwordInput.setEnabled(!busy);
+                  loginButton.setEnabled(!busy);
+                  statusText.setText(message);
+              }
+
+              private void openSmartTube() {
+                  Intent intent =
+                          new Intent(this, SplashActivity.class);
+
+                  startActivity(intent);
+                  finish();
+              }
+          }
+          JAVA
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          manifest = Path('smarttubetv/src/main/AndroidManifest.xml')
+          text = manifest.read_text()
+
+          splash_marker = '''        <activity
+                      android:name="com.liskovsoft.smartyoutubetv2.tv.ui.main.SplashActivity"'''
+
+          exile_activity = '''        <activity
+                      android:name="uk.co.exilemedia.tube.ExileLoginActivity"
+                      android:exported="true"
+                      android:launchMode="singleTask"
+                      android:screenOrientation="unspecified"
+                      android:theme="@android:style/Theme.Material.NoActionBar">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.DEFAULT"/>
+                          <category android:name="android.intent.category.LAUNCHER" />
+                          <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+
+          '''
+
+          if 'uk.co.exilemedia.tube.ExileLoginActivity' not in text:
+              if splash_marker not in text:
+                  raise SystemExit('Could not locate SplashActivity in manifest')
+
+              text = text.replace(
+                  splash_marker,
+                  exile_activity + splash_marker,
+                  1
+              )
+
+          launcher_filter = '''            <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+
+                          <category android:name="android.intent.category.DEFAULT"/>
+                          <category android:name="android.intent.category.LAUNCHER" />
+                          <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+                      </intent-filter>
+          '''
+
+          if launcher_filter not in text:
+              raise SystemExit('Could not locate original SmartTube launcher filter')
+
+          text = text.replace(launcher_filter, '', 1)
+
+          manifest.write_text(text)
+          PY
+
+          echo "Exile Access login gate added."
+
       - name: Apply Exile Premium Tube artwork
         run: |
           set -e
@@ -98,6 +519,7 @@ jobs:
           SPLASH="exile/IMG_9171.jpeg"
           BANNER="exile/BDEA3ABA-ABD5-46CC-BE86-6DFDB9550A24.png"
           INTERNAL_LOGO="$ICON"
+
           echo "Finding SmartTube visual resources..."
 
           find smarttube/smarttubetv/src -type f \
@@ -126,10 +548,11 @@ jobs:
           )
 
           mkdir -p smarttube/smarttubetv/src/stfdroid/res/drawable-nodpi
+
           cp "$SPLASH" \
             smarttube/smarttubetv/src/stfdroid/res/drawable-nodpi/exile_splash.jpg
 
-                 echo "Replacing internal SmartTube/F-Droid artwork..."
+          echo "Replacing internal SmartTube/F-Droid artwork..."
 
           while IFS= read -r target; do
             cp "$INTERNAL_LOGO" "$target"
@@ -138,7 +561,8 @@ jobs:
               \( -name 'app_logo_semi_red.png' -o \
                  -name 'app_logo_semi_grey.png' -o \
                  -name 'app_icon_alt.png' \)
-          )   
+          )
+
           echo "Exile artwork copied."
 
       - name: Set up Java 17
@@ -170,7 +594,7 @@ jobs:
       - name: Upload Exile Tube APK
         uses: actions/upload-artifact@v4
         with:
-          name: ExileTube-visual-brand-build
+          name: ExileTube-build6-auth
           path: >
             smarttube/smarttubetv/build/outputs/apk/stfdroid/debug/*.apk
           if-no-files-found: error
