@@ -45,14 +45,14 @@ jobs:
               'def project = "ExileTube"'
           )
 
-          # Build 10
+          # Build 11
           text = text.replace(
               'versionCode 2437',
-              'versionCode 2439'
+              'versionCode 2440'
           )
           text = text.replace(
               'versionName "32.47"',
-              'versionName "32.49"'
+              'versionName "32.50"'
           )
 
           gradle.write_text(text)
@@ -1259,7 +1259,7 @@ jobs:
       - name: Upload permanently signed Exile Tube APK
         uses: actions/upload-artifact@v4
         with:
-          name: ExileTube-build10-updater
+          name: ExileTube-build11-updater
           path: >
             smarttube/smarttubetv/build/outputs/apk/stfdroid/debug/*.apk
           if-no-files-found: error
