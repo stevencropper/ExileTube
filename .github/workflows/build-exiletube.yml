@@ -45,14 +45,14 @@ jobs:
               'def project = "ExileTube"'
           )
 
-          # Build 9: controlled Exile Tube version bump
+          # Build 10
           text = text.replace(
               'versionCode 2437',
-              'versionCode 2438'
+              'versionCode 2439'
           )
           text = text.replace(
               'versionName "32.47"',
-              'versionName "32.48"'
+              'versionName "32.49"'
           )
 
           gradle.write_text(text)
@@ -101,7 +101,7 @@ jobs:
                   utils.write_text(src)
           PY
 
-      - name: Add Exile Access login gate
+      - name: Add Exile Access login and updater
         working-directory: smarttube
         run: |
           mkdir -p smarttubetv/src/main/java/uk/co/exilemedia/tube
@@ -110,12 +110,21 @@ jobs:
           package uk.co.exilemedia.tube;
 
           import android.app.Activity;
+          import android.app.AlertDialog;
+          import android.app.DownloadManager;
+          import android.content.BroadcastReceiver;
+          import android.content.Context;
           import android.content.Intent;
+          import android.content.IntentFilter;
           import android.content.SharedPreferences;
+          import android.content.pm.PackageInfo;
           import android.graphics.Color;
           import android.graphics.drawable.Drawable;
+          import android.net.Uri;
           import android.os.Build;
           import android.os.Bundle;
+          import android.os.Environment;
+          import android.provider.Settings;
           import android.text.InputType;
           import android.view.Gravity;
           import android.widget.Button;
@@ -141,9 +150,14 @@ jobs:
               private static final String API_BASE =
                       "https://unwieldy-tender-byte.replit.app/api";
 
+              private static final String UPDATE_ENDPOINT =
+                      API_BASE + "/client/update";
+
               private static final String PREFS = "exile_access";
               private static final String KEY_TOKEN = "session_token";
               private static final String KEY_DEVICE_ID = "device_id";
+
+              private static final int REQUEST_INSTALL_PERMISSION = 501;
 
               private SharedPreferences prefs;
               private EditText usernameInput;
@@ -151,6 +165,12 @@ jobs:
               private Button loginButton;
               private TextView statusText;
               private String deviceId;
+
+              private String pendingUpdateUrl;
+              private String pendingVersionName;
+
+              private long activeDownloadId = -1;
+              private BroadcastReceiver downloadReceiver;
 
               @Override
               protected void onCreate(Bundle savedInstanceState) {
@@ -184,6 +204,7 @@ jobs:
                                   LinearLayout.LayoutParams.MATCH_PARENT,
                                   LinearLayout.LayoutParams.WRAP_CONTENT
                           );
+
                   wideParams.setMargins(0, 10, 0, 10);
 
                   ImageView logo = new ImageView(this);
@@ -191,14 +212,17 @@ jobs:
                   try {
                       Drawable icon = getPackageManager()
                               .getApplicationIcon(getApplicationInfo());
+
                       logo.setImageDrawable(icon);
                   } catch (Exception ignored) {
                   }
 
                   LinearLayout.LayoutParams logoParams =
                           new LinearLayout.LayoutParams(180, 180);
+
                   logoParams.gravity = Gravity.CENTER_HORIZONTAL;
                   logoParams.setMargins(0, 0, 0, 20);
+
                   root.addView(logo, logoParams);
 
                   TextView title = new TextView(this);
@@ -206,7 +230,11 @@ jobs:
                   title.setTextColor(Color.WHITE);
                   title.setTextSize(28);
                   title.setGravity(Gravity.CENTER);
-                  title.setTypeface(null, android.graphics.Typeface.BOLD);
+                  title.setTypeface(
+                          null,
+                          android.graphics.Typeface.BOLD
+                  );
+
                   root.addView(title, wideParams);
 
                   TextView subtitle = new TextView(this);
@@ -214,6 +242,7 @@ jobs:
                   subtitle.setTextColor(Color.rgb(255, 95, 31));
                   subtitle.setTextSize(19);
                   subtitle.setGravity(Gravity.CENTER);
+
                   root.addView(subtitle, wideParams);
 
                   usernameInput = new EditText(this);
@@ -222,6 +251,7 @@ jobs:
                   usernameInput.setTextColor(Color.WHITE);
                   usernameInput.setHintTextColor(Color.LTGRAY);
                   usernameInput.setTextSize(20);
+
                   root.addView(usernameInput, wideParams);
 
                   passwordInput = new EditText(this);
@@ -234,6 +264,7 @@ jobs:
                           InputType.TYPE_CLASS_TEXT |
                           InputType.TYPE_TEXT_VARIATION_PASSWORD
                   );
+
                   root.addView(passwordInput, wideParams);
 
                   loginButton = new Button(this);
@@ -242,6 +273,7 @@ jobs:
                   loginButton.setAllCaps(true);
                   loginButton.setFocusable(true);
                   loginButton.setFocusableInTouchMode(true);
+
                   root.addView(loginButton, wideParams);
 
                   statusText = new TextView(this);
@@ -249,6 +281,7 @@ jobs:
                   statusText.setTextSize(17);
                   statusText.setGravity(Gravity.CENTER);
                   statusText.setPadding(0, 20, 0, 0);
+
                   root.addView(statusText, wideParams);
 
                   loginButton.setOnClickListener(v -> performLogin());
@@ -257,7 +290,8 @@ jobs:
               }
 
               private String getOrCreateDeviceId() {
-                  String existing = prefs.getString(KEY_DEVICE_ID, null);
+                  String existing =
+                          prefs.getString(KEY_DEVICE_ID, null);
 
                   if (existing != null && existing.length() >= 8) {
                       return existing;
@@ -274,11 +308,17 @@ jobs:
 
               private String getDeviceName() {
                   String manufacturer =
-                          Build.MANUFACTURER == null ? "" : Build.MANUFACTURER;
-                  String model =
-                          Build.MODEL == null ? "Android TV" : Build.MODEL;
+                          Build.MANUFACTURER == null
+                                  ? ""
+                                  : Build.MANUFACTURER;
 
-                  String name = (manufacturer + " " + model).trim();
+                  String model =
+                          Build.MODEL == null
+                                  ? "Android TV"
+                                  : Build.MODEL;
+
+                  String name =
+                          (manufacturer + " " + model).trim();
 
                   if (name.length() > 255) {
                       name = name.substring(0, 255);
@@ -288,11 +328,17 @@ jobs:
               }
 
               private void performLogin() {
-                  String username = usernameInput.getText().toString().trim();
-                  String password = passwordInput.getText().toString();
+                  String username =
+                          usernameInput.getText().toString().trim();
+
+                  String password =
+                          passwordInput.getText().toString();
 
                   if (username.isEmpty() || password.isEmpty()) {
-                      statusText.setText("Enter your username and password.");
+                      statusText.setText(
+                              "Enter your username and password."
+                      );
+
                       return;
                   }
 
@@ -301,16 +347,27 @@ jobs:
                   new Thread(() -> {
                       try {
                           JSONObject request = new JSONObject();
+
                           request.put("username", username);
                           request.put("password", password);
                           request.put("deviceId", deviceId);
-                          request.put("deviceName", getDeviceName());
+                          request.put(
+                                  "deviceName",
+                                  getDeviceName()
+                          );
 
                           JSONObject response =
-                                  postJson(API_BASE + "/client/login", request);
+                                  postJson(
+                                          API_BASE + "/client/login",
+                                          request
+                                  );
 
                           String status =
-                                  response.optString("status", "denied");
+                                  response.optString(
+                                          "status",
+                                          "denied"
+                                  );
+
                           String message =
                                   response.optString(
                                           "message",
@@ -319,12 +376,16 @@ jobs:
 
                           if ("allowed".equalsIgnoreCase(status)) {
                               String token =
-                                      response.optString("token", "");
+                                      response.optString(
+                                              "token",
+                                              ""
+                                      );
 
                               if (token.isEmpty()) {
                                   showError(
-                                      "Login succeeded but no session token was returned."
+                                          "Login succeeded but no session token was returned."
                                   );
+
                                   return;
                               }
 
@@ -332,7 +393,7 @@ jobs:
                                       .putString(KEY_TOKEN, token)
                                       .apply();
 
-                              runOnUiThread(this::openSmartTube);
+                              checkForUpdateThenOpen();
                           } else {
                               showError(message);
                           }
@@ -347,15 +408,24 @@ jobs:
               private void validateSession(String token) {
                   new Thread(() -> {
                       try {
-                          JSONObject request = new JSONObject();
+                          JSONObject request =
+                                  new JSONObject();
+
                           request.put("token", token);
                           request.put("deviceId", deviceId);
 
                           JSONObject response =
-                                  postJson(API_BASE + "/client/session", request);
+                                  postJson(
+                                          API_BASE + "/client/session",
+                                          request
+                                  );
 
                           String status =
-                                  response.optString("status", "denied");
+                                  response.optString(
+                                          "status",
+                                          "denied"
+                                  );
+
                           String message =
                                   response.optString(
                                           "message",
@@ -363,9 +433,12 @@ jobs:
                                   );
 
                           if ("allowed".equalsIgnoreCase(status)) {
-                              runOnUiThread(this::openSmartTube);
+                              checkForUpdateThenOpen();
                           } else {
-                              prefs.edit().remove(KEY_TOKEN).apply();
+                              prefs.edit()
+                                      .remove(KEY_TOKEN)
+                                      .apply();
+
                               showError(message);
                           }
                       } catch (Exception e) {
@@ -374,74 +447,571 @@ jobs:
                                       false,
                                       "Unable to verify access. Check your internet connection."
                               );
+
                               usernameInput.requestFocus();
                           });
                       }
                   }).start();
               }
 
-              private JSONObject postJson(String endpoint, JSONObject body)
+              private void checkForUpdateThenOpen() {
+                  runOnUiThread(() ->
+                          statusText.setText(
+                                  "Checking for updates..."
+                          )
+                  );
+
+                  new Thread(() -> {
+                      try {
+                          JSONObject update =
+                                  getJson(UPDATE_ENDPOINT);
+
+                          boolean enabled =
+                                  update.optBoolean(
+                                          "updatesEnabled",
+                                          false
+                                  );
+
+                          int remoteVersion =
+                                  update.optInt(
+                                          "versionCode",
+                                          0
+                                  );
+
+                          String versionName =
+                                  update.optString(
+                                          "versionName",
+                                          ""
+                                  );
+
+                          String apkUrl =
+                                  update.optString(
+                                          "apkDownloadUrl",
+                                          ""
+                                  );
+
+                          boolean required =
+                                  update.optBoolean(
+                                          "required",
+                                          false
+                                  );
+
+                          String message =
+                                  update.optString(
+                                          "message",
+                                          ""
+                                  );
+
+                          int installedVersion =
+                                  getInstalledVersionCode();
+
+                          if (
+                                  enabled &&
+                                  remoteVersion > installedVersion &&
+                                  !apkUrl.isEmpty()
+                          ) {
+                              showUpdateDialog(
+                                      versionName,
+                                      apkUrl,
+                                      required,
+                                      message
+                              );
+                          } else {
+                              runOnUiThread(
+                                      this::openSmartTube
+                              );
+                          }
+                      } catch (Exception ignored) {
+                          runOnUiThread(this::openSmartTube);
+                      }
+                  }).start();
+              }
+
+              private int getInstalledVersionCode()
+                      throws Exception {
+
+                  PackageInfo info =
+                          getPackageManager()
+                                  .getPackageInfo(
+                                          getPackageName(),
+                                          0
+                                  );
+
+                  if (Build.VERSION.SDK_INT >= 28) {
+                      return (int) info.getLongVersionCode();
+                  }
+
+                  return info.versionCode;
+              }
+
+              private void showUpdateDialog(
+                      String versionName,
+                      String apkUrl,
+                      boolean required,
+                      String message
+              ) {
+                  runOnUiThread(() -> {
+                      String title = "Exile Tube Update";
+
+                      String body = message;
+
+                      if (body == null || body.trim().isEmpty()) {
+                          body =
+                                  "A new version of Exile Tube is available.";
+                      }
+
+                      if (
+                              versionName != null &&
+                              !versionName.trim().isEmpty()
+                      ) {
+                          body += "\n\nVersion " + versionName;
+                      }
+
+                      AlertDialog.Builder builder =
+                              new AlertDialog.Builder(this);
+
+                      builder.setTitle(title);
+                      builder.setMessage(body);
+
+                      builder.setPositiveButton(
+                              "UPDATE NOW",
+                              (dialog, which) ->
+                                      beginUpdate(
+                                              apkUrl,
+                                              versionName
+                                      )
+                      );
+
+                      if (!required) {
+                          builder.setNegativeButton(
+                                  "LATER",
+                                  (dialog, which) ->
+                                          openSmartTube()
+                          );
+                      }
+
+                      AlertDialog dialog = builder.create();
+
+                      dialog.setCancelable(!required);
+                      dialog.setCanceledOnTouchOutside(
+                              !required
+                      );
+
+                      dialog.show();
+                  });
+              }
+
+              private void beginUpdate(
+                      String apkUrl,
+                      String versionName
+              ) {
+                  pendingUpdateUrl = apkUrl;
+                  pendingVersionName = versionName;
+
+                  if (
+                          Build.VERSION.SDK_INT >= 26 &&
+                          !getPackageManager()
+                                  .canRequestPackageInstalls()
+                  ) {
+                      try {
+                          Intent permissionIntent =
+                                  new Intent(
+                                          Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                                          Uri.parse(
+                                                  "package:" +
+                                                  getPackageName()
+                                          )
+                                  );
+
+                          startActivityForResult(
+                                  permissionIntent,
+                                  REQUEST_INSTALL_PERMISSION
+                          );
+
+                          return;
+                      } catch (Exception ignored) {
+                      }
+                  }
+
+                  startUpdateDownload(
+                          pendingUpdateUrl,
+                          pendingVersionName
+                  );
+              }
+
+              @Override
+              protected void onActivityResult(
+                      int requestCode,
+                      int resultCode,
+                      Intent data
+              ) {
+                  super.onActivityResult(
+                          requestCode,
+                          resultCode,
+                          data
+                  );
+
+                  if (
+                          requestCode ==
+                                  REQUEST_INSTALL_PERMISSION
+                  ) {
+                      if (
+                              Build.VERSION.SDK_INT < 26 ||
+                              getPackageManager()
+                                      .canRequestPackageInstalls()
+                      ) {
+                          startUpdateDownload(
+                                  pendingUpdateUrl,
+                                  pendingVersionName
+                          );
+                      } else {
+                          statusText.setText(
+                                  "Install permission is required to update Exile Tube."
+                          );
+                      }
+                  }
+              }
+
+              private void startUpdateDownload(
+                      String apkUrl,
+                      String versionName
+              ) {
+                  try {
+                      if (
+                              apkUrl == null ||
+                              apkUrl.trim().isEmpty()
+                      ) {
+                          openSmartTube();
+                          return;
+                      }
+
+                      statusText.setText(
+                              "Downloading Exile Tube update..."
+                      );
+
+                      DownloadManager manager =
+                              (DownloadManager)
+                                      getSystemService(
+                                              DOWNLOAD_SERVICE
+                                      );
+
+                      if (manager == null) {
+                          throw new Exception(
+                                  "Download Manager unavailable."
+                          );
+                      }
+
+                      Uri downloadUri =
+                              Uri.parse(apkUrl);
+
+                      DownloadManager.Request request =
+                              new DownloadManager.Request(
+                                      downloadUri
+                              );
+
+                      request.setTitle(
+                              "Exile Tube Update"
+                      );
+
+                      request.setDescription(
+                              versionName == null
+                                      ? "Downloading update"
+                                      : "Downloading version " +
+                                        versionName
+                      );
+
+                      request.setNotificationVisibility(
+                              DownloadManager.Request
+                                      .VISIBILITY_VISIBLE_NOTIFY_COMPLETED
+                      );
+
+                      request.setMimeType(
+                              "application/vnd.android.package-archive"
+                      );
+
+                      request.setDestinationInExternalFilesDir(
+                              this,
+                              Environment.DIRECTORY_DOWNLOADS,
+                              "ExileTube-update.apk"
+                      );
+
+                      registerDownloadReceiver(manager);
+
+                      activeDownloadId =
+                              manager.enqueue(request);
+                  } catch (Exception e) {
+                      statusText.setText(
+                              "Unable to download the update."
+                      );
+                  }
+              }
+
+              private void registerDownloadReceiver(
+                      DownloadManager manager
+              ) {
+                  if (downloadReceiver != null) {
+                      return;
+                  }
+
+                  downloadReceiver =
+                          new BroadcastReceiver() {
+                              @Override
+                              public void onReceive(
+                                      Context context,
+                                      Intent intent
+                              ) {
+                                  long id =
+                                          intent.getLongExtra(
+                                                  DownloadManager.EXTRA_DOWNLOAD_ID,
+                                                  -1
+                                          );
+
+                                  if (
+                                          id != activeDownloadId
+                                  ) {
+                                      return;
+                                  }
+
+                                  Uri apkUri =
+                                          manager
+                                                  .getUriForDownloadedFile(
+                                                          id
+                                                  );
+
+                                  if (apkUri == null) {
+                                      statusText.setText(
+                                              "Update download failed."
+                                      );
+
+                                      unregisterDownloadReceiver();
+                                      return;
+                                  }
+
+                                  try {
+                                      Intent install =
+                                              new Intent(
+                                                      Intent.ACTION_VIEW
+                                              );
+
+                                      install.setDataAndType(
+                                              apkUri,
+                                              "application/vnd.android.package-archive"
+                                      );
+
+                                      install.addFlags(
+                                              Intent.FLAG_GRANT_READ_URI_PERMISSION
+                                      );
+
+                                      install.addFlags(
+                                              Intent.FLAG_ACTIVITY_NEW_TASK
+                                      );
+
+                                      startActivity(install);
+                                  } catch (Exception e) {
+                                      statusText.setText(
+                                              "Update downloaded but Android could not open the installer."
+                                      );
+                                  }
+
+                                  unregisterDownloadReceiver();
+                              }
+                          };
+
+                  IntentFilter filter =
+                          new IntentFilter(
+                                  DownloadManager
+                                          .ACTION_DOWNLOAD_COMPLETE
+                          );
+
+                  if (Build.VERSION.SDK_INT >= 33) {
+                      registerReceiver(
+                              downloadReceiver,
+                              filter,
+                              Context.RECEIVER_NOT_EXPORTED
+                      );
+                  } else {
+                      registerReceiver(
+                              downloadReceiver,
+                              filter
+                      );
+                  }
+              }
+
+              private void unregisterDownloadReceiver() {
+                  if (downloadReceiver == null) {
+                      return;
+                  }
+
+                  try {
+                      unregisterReceiver(
+                              downloadReceiver
+                      );
+                  } catch (Exception ignored) {
+                  }
+
+                  downloadReceiver = null;
+              }
+
+              @Override
+              protected void onDestroy() {
+                  unregisterDownloadReceiver();
+                  super.onDestroy();
+              }
+
+              private JSONObject getJson(String endpoint)
                       throws Exception {
 
                   HttpURLConnection connection =
-                          (HttpURLConnection) new URL(endpoint).openConnection();
+                          (HttpURLConnection)
+                                  new URL(endpoint)
+                                          .openConnection();
 
-                  connection.setRequestMethod("POST");
+                  connection.setRequestMethod("GET");
                   connection.setConnectTimeout(10000);
                   connection.setReadTimeout(10000);
-                  connection.setDoOutput(true);
-                  connection.setRequestProperty(
-                          "Content-Type",
-                          "application/json; charset=utf-8"
-                  );
+
                   connection.setRequestProperty(
                           "Accept",
                           "application/json"
                   );
 
-                  byte[] payload =
-                          body.toString().getBytes(StandardCharsets.UTF_8);
+                  int responseCode =
+                          connection.getResponseCode();
 
-                  try (OutputStream output = connection.getOutputStream()) {
-                      output.write(payload);
-                  }
+                  if (
+                          responseCode < 200 ||
+                          responseCode >= 300
+                  ) {
+                      connection.disconnect();
 
-                  int responseCode = connection.getResponseCode();
-
-                  InputStream input;
-
-                  if (responseCode >= 200 && responseCode < 300) {
-                      input = connection.getInputStream();
-                  } else {
-                      input = connection.getErrorStream();
-                  }
-
-                  if (input == null) {
                       throw new Exception(
-                              "Empty server response: " + responseCode
+                              "HTTP " + responseCode
                       );
                   }
 
-                  StringBuilder responseText = new StringBuilder();
+                  InputStream input =
+                          connection.getInputStream();
 
-                  try (BufferedReader reader =
-                               new BufferedReader(
-                                       new InputStreamReader(
-                                               input,
-                                               StandardCharsets.UTF_8
-                                       )
-                               )) {
+                  StringBuilder responseText =
+                          new StringBuilder();
 
+                  try (
+                          BufferedReader reader =
+                                  new BufferedReader(
+                                          new InputStreamReader(
+                                                  input,
+                                                  StandardCharsets.UTF_8
+                                          )
+                                  )
+                  ) {
                       String line;
 
-                      while ((line = reader.readLine()) != null) {
+                      while (
+                              (line = reader.readLine())
+                                      != null
+                      ) {
                           responseText.append(line);
                       }
                   } finally {
                       connection.disconnect();
                   }
 
-                  return new JSONObject(responseText.toString());
+                  return new JSONObject(
+                          responseText.toString()
+                  );
+              }
+
+              private JSONObject postJson(
+                      String endpoint,
+                      JSONObject body
+              ) throws Exception {
+
+                  HttpURLConnection connection =
+                          (HttpURLConnection)
+                                  new URL(endpoint)
+                                          .openConnection();
+
+                  connection.setRequestMethod("POST");
+                  connection.setConnectTimeout(10000);
+                  connection.setReadTimeout(10000);
+                  connection.setDoOutput(true);
+
+                  connection.setRequestProperty(
+                          "Content-Type",
+                          "application/json; charset=utf-8"
+                  );
+
+                  connection.setRequestProperty(
+                          "Accept",
+                          "application/json"
+                  );
+
+                  byte[] payload =
+                          body.toString()
+                                  .getBytes(
+                                          StandardCharsets.UTF_8
+                                  );
+
+                  try (
+                          OutputStream output =
+                                  connection
+                                          .getOutputStream()
+                  ) {
+                      output.write(payload);
+                  }
+
+                  int responseCode =
+                          connection.getResponseCode();
+
+                  InputStream input;
+
+                  if (
+                          responseCode >= 200 &&
+                          responseCode < 300
+                  ) {
+                      input =
+                              connection
+                                      .getInputStream();
+                  } else {
+                      input =
+                              connection
+                                      .getErrorStream();
+                  }
+
+                  if (input == null) {
+                      throw new Exception(
+                              "Empty server response: " +
+                              responseCode
+                      );
+                  }
+
+                  StringBuilder responseText =
+                          new StringBuilder();
+
+                  try (
+                          BufferedReader reader =
+                                  new BufferedReader(
+                                          new InputStreamReader(
+                                                  input,
+                                                  StandardCharsets.UTF_8
+                                          )
+                                  )
+                  ) {
+                      String line;
+
+                      while (
+                              (line = reader.readLine())
+                                      != null
+                      ) {
+                          responseText.append(line);
+                      }
+                  } finally {
+                      connection.disconnect();
+                  }
+
+                  return new JSONObject(
+                          responseText.toString()
+                  );
               }
 
               private void showError(String message) {
@@ -452,7 +1022,10 @@ jobs:
                   });
               }
 
-              private void setBusy(boolean busy, String message) {
+              private void setBusy(
+                      boolean busy,
+                      String message
+              ) {
                   usernameInput.setEnabled(!busy);
                   passwordInput.setEnabled(!busy);
                   loginButton.setEnabled(!busy);
@@ -461,7 +1034,10 @@ jobs:
 
               private void openSmartTube() {
                   Intent intent =
-                          new Intent(this, SplashActivity.class);
+                          new Intent(
+                                  this,
+                                  SplashActivity.class
+                          );
 
                   startActivity(intent);
                   finish();
@@ -472,8 +1048,34 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          manifest = Path('smarttubetv/src/main/AndroidManifest.xml')
+          manifest = Path(
+              'smarttubetv/src/main/AndroidManifest.xml'
+          )
+
           text = manifest.read_text()
+
+          install_permission = (
+              '    <uses-permission '
+              'android:name="android.permission.REQUEST_INSTALL_PACKAGES" />\n'
+          )
+
+          if (
+              'android.permission.REQUEST_INSTALL_PACKAGES'
+              not in text
+          ):
+              manifest_tag = '<manifest'
+
+              tag_end = text.find(
+                  '>',
+                  text.find(manifest_tag)
+              )
+
+              text = (
+                  text[:tag_end + 1] +
+                  '\n' +
+                  install_permission +
+                  text[tag_end + 1:]
+              )
 
           splash_marker = '''        <activity
                       android:name="com.liskovsoft.smartyoutubetv2.tv.ui.main.SplashActivity"'''
@@ -494,7 +1096,10 @@ jobs:
 
           '''
 
-          if 'uk.co.exilemedia.tube.ExileLoginActivity' not in text:
+          if (
+              'uk.co.exilemedia.tube.ExileLoginActivity'
+              not in text
+          ):
               if splash_marker not in text:
                   raise SystemExit(
                       'Could not locate SplashActivity in manifest'
@@ -520,12 +1125,16 @@ jobs:
                   'Could not locate original SmartTube launcher filter'
               )
 
-          text = text.replace(launcher_filter, '', 1)
+          text = text.replace(
+              launcher_filter,
+              '',
+              1
+          )
 
           manifest.write_text(text)
           PY
 
-          echo "Exile Access login gate added."
+          echo "Exile Access login gate and updater added."
 
       - name: Apply Exile Premium Tube artwork
         run: |
@@ -588,6 +1197,7 @@ jobs:
       - name: Install required Android packages
         run: |
           yes | sdkmanager --licenses >/dev/null || true
+
           sdkmanager \
             "platforms;android-34" \
             "build-tools;30.0.3" \
@@ -626,6 +1236,7 @@ jobs:
           JAVA_TOOL_OPTIONS: -XX:+PerfDisableSharedMem
         run: |
           chmod +x gradlew
+
           ./gradlew --no-daemon \
             :smarttubetv:assembleStfdroidDebug
 
@@ -648,7 +1259,7 @@ jobs:
       - name: Upload permanently signed Exile Tube APK
         uses: actions/upload-artifact@v4
         with:
-          name: ExileTube-build9-update-test
+          name: ExileTube-build10-updater
           path: >
             smarttube/smarttubetv/build/outputs/apk/stfdroid/debug/*.apk
           if-no-files-found: error
