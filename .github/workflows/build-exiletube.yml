@@ -97,7 +97,7 @@ jobs:
           ICON="exile/IMG_9170.png"
           SPLASH="exile/IMG_9171.jpeg"
           BANNER="exile/BDEA3ABA-ABD5-46CC-BE86-6DFDB9550A24.png"
-
+          INTERNAL_LOGO="$ICON"
           echo "Finding SmartTube visual resources..."
 
           find smarttube/smarttubetv/src -type f \
@@ -129,6 +129,16 @@ jobs:
           cp "$SPLASH" \
             smarttube/smarttubetv/src/stfdroid/res/drawable-nodpi/exile_splash.jpg
 
+                 echo "Replacing internal SmartTube/F-Droid artwork..."
+
+          while IFS= read -r target; do
+            cp "$INTERNAL_LOGO" "$target"
+          done < <(
+            find smarttube/smarttubetv/src -type f \
+              \( -name 'app_logo_semi_red.png' -o \
+                 -name 'app_logo_semi_grey.png' -o \
+                 -name 'app_icon_alt.png' \)
+          )   
           echo "Exile artwork copied."
 
       - name: Set up Java 17
