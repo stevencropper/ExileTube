@@ -1,0 +1,46 @@
+name: Sign Exile Tube Production
+
+on:
+  workflow_dispatch:
+
+jobs:
+  sign:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Checkout pinned SmartTube source
+        uses: actions/checkout@v4
+        with:
+          repository: yuliskov/SmartTube
+          ref: c0dfea54672f9cbba8ae3d1272917484b2c71dc4
+          submodules: recursive
+          path: smarttube
+
+      - name: Restore production signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.EXILE_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.EXILE_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.EXILE_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.EXILE_KEY_PASSWORD }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 --decode > smarttube/exile-production.keystore
+
+          cat > smarttube/keystore.properties <<EOF
+          storeFile=../exile-production.keystore
+          storePassword=$STORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+
+      - name: Verify signing key
+        env:
+          STORE_PASSWORD: ${{ secrets.EXILE_KEYSTORE_PASSWORD }}
+        run: |
+          keytool -list \
+            -keystore smarttube/exile-production.keystore \
+            -storepass "$STORE_PASSWORD" >/dev/null
+
+          echo "Exile production signing key verified."
